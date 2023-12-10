@@ -41,13 +41,19 @@ def normalize_series(data, min, max):
 
 # COMPLETE THE CODE IN THE FOLLOWING FUNCTION.
 def windowed_dataset(series, batch_size, n_past=24, n_future=24, shift=1):
-    ds = tf.expand_dims(series, axis=-1)
-    ds = tf.data.Dataset.from_tensor_slices(ds)
-    ds = ds.window(size=n_past + n_future,
-                   shift=shift, drop_remainder=True)
-    ds = ds.flat_map(lambda w: w.batch(n_past + n_future))
-    ds = ds.map(lambda x: (x[:-n_future], x[-n_future:, :1]))
-    return ds.batch(batch_size).prefetch(1)
+    dataset = tf.data.Dataset.from_tensor_slices(series)
+    dataset = dataset.window(n_past + n_future, shift=shift, drop_remainder=True)
+    dataset = dataset.flat_map(lambda window: window.batch(n_past + n_future))
+    dataset = dataset.shuffle(1000)
+    dataset = dataset.map(lambda window: (window[:-n_past], window[-n_past:, :1]))
+    return dataset.batch(batch_size).prefetch(1)
+
+
+class myCallback(tf.keras.callbacks.Callback):
+    def on_epoch_end(self, epoch, logs={}):
+        if (logs.get('mae')) < 0.04:
+            print(" it has reached < 0.04 ")
+            self.model.stop_training = True
 
 
 # COMPLETE THE CODE IN THE FOLLOWING FUNCTION.
@@ -80,27 +86,25 @@ def solution_C5():
 
     # Code to create windowed train and validation datasets.
     # Complete the code in windowed_dataset.
-    train_set = windowed_dataset(series=x_train, batch_size=BATCH_SIZE, n_past=N_PAST, n_future=N_FUTURE, shift=SHIFT)
-    valid_set = windowed_dataset(series=x_valid, batch_size=BATCH_SIZE, n_past=N_PAST, n_future=N_FUTURE, shift=SHIFT)
+    train_set = windowed_dataset(x_train, BATCH_SIZE, N_PAST, N_FUTURE, SHIFT)
+    valid_set = windowed_dataset(x_valid, BATCH_SIZE, N_PAST, N_FUTURE, SHIFT)  # YOUR CODE HERE
 
     # Code to define your model.
     model = tf.keras.models.Sequential([
-        tf.keras.layers.Flatten(input_shape=(N_PAST, N_FEATURES)),
-        tf.keras.layers.Dense(128, activation='relu'),
-        tf.keras.layers.Dropout(0.3),
-        tf.keras.layers.Dense(128, activation='relu'),
-        tf.keras.layers.Dropout(0.3),
-        tf.keras.layers.Dense(N_FEATURES)
+        tf.keras.layers.Input(shape=(N_PAST, N_FEATURES)),
+        tf.keras.layers.LSTM(64, return_sequences=True),
+        tf.keras.layers.LSTM(64),
+        tf.keras.layers.Dropout(.2),
+        tf.keras.layers.Dense(512, activation='relu'),
+        tf.keras.layers.Dense(256, activation='relu'),
+        tf.keras.layers.Dense(N_FUTURE * N_FEATURES),
+        tf.keras.layers.Reshape([N_FUTURE, N_FEATURES])
     ])
 
     # Code to train and compile the model
-    loss = tf.keras.losses.Huber()
-    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)  # YOUR CODE HERE
-    model.compile(loss=loss, optimizer='adam', metrics=['mae'])
-
-    num_epochs = 10
-    model.fit(x=train_set, validation_data=valid_set, epochs=num_epochs, verbose=2)
-
+    model.compile(optimizer=tf.keras.optimizers.Adam(), loss='huber', metrics=['mae'])
+    callbacks = myCallback()
+    model.fit(train_set, epochs=100, validation_data=valid_set, callbacks=callbacks, verbose=1)
     return model
 
 
